@@ -6,4 +6,5 @@
 .Rproj.user
 .DS_Store
 .gitignore
+.RData
 addCommitPush.sh

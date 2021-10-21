@@ -21,7 +21,8 @@ packs = c("tidyverse",
           "ggtext",
           "ggthemes",
           "ggrepel",
-          "openxlsx")
+          "openxlsx",
+          "eulerr")
 
 p_load(char = packs)
 
@@ -243,13 +244,6 @@ for(i in 1:length(comps)){
                                         denominator = comps[[i]][2])
 }
 
-# drawing venn diagrams
-venn(combinations = list("25C_vs_23C" = res$temperature$`25C_vs_23C`$sigGenes,
-                         "30C_vs_25C" = res$temperature$`30C_vs_25C`$sigGenes,
-                         "37C_vs_30C" = res$temperature$`37C_vs_30C`$sigGenes,
-                         "42C_vs_37C" = res$temperature$`42C_vs_37C`$sigGenes)) %>%
-  plot()
-
 # function to write deseq2 results
 writeResults = function(resultsObj = resultsObj, var = var, contrastName = contrastName){
   
@@ -296,3 +290,20 @@ colnames(countsdf) = c("gene", colData$sample)
 
 write_tsv(x = countsdf,
           file = "results/counts.tsv")
+
+# creating venn diagram of consecutive
+# temperature changes
+# drawing venn diagrams
+vennplot = venn(combinations = list("25C_vs_23C" = res$temperature$`25C_vs_23C`$sigGenes,
+                                    "30C_vs_25C" = res$temperature$`30C_vs_25C`$sigGenes,
+                                    "37C_vs_30C" = res$temperature$`37C_vs_30C`$sigGenes,
+                                    "42C_vs_37C" = res$temperature$`42C_vs_37C`$sigGenes)) %>%
+  plot()
+
+ggsave(plot = vennplot,
+       filename = "plots/vennplot_temperature.png",
+       device = "png",
+       width = 7,
+       height = 7,
+       dpi = 300,
+       units = "in")
