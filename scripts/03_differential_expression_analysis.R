@@ -9,7 +9,7 @@
 # heat and co2 response
 
 # setting wd
-setwd("~/gdrive/carabica_heat_co2/")
+#setwd("~/gdrive/carabica_heat_co2/")
 
 # loading libs ####
 library(pacman)
@@ -50,9 +50,13 @@ annot = rtracklayer::import(con = "data/Carabica.gff") %>%
   as.data.frame() %>% 
   as_tibble()
 
-tx2gene = annot %>% 
-  filter(type == "mRNA") %>% 
-  select(TXNAME = Name, GENEID = gene)
+# considering most of entries (except rRNA and partial mRNA)
+# in RefSeq transcriptome file
+tx2gene = annot %>%
+  filter(gbkey == "mRNA" | gbkey == "ncRNA" | gbkey == "misc_RNA") %>%
+  select(TXNAME = Name, GENEID = gene) %>%
+  drop_na() %>%
+  unique()
 
 # finding files
 PRJNA609253 = paste0(list.dirs(path = "salmon_quant/PRJNA609253", recursive = F), "/",
