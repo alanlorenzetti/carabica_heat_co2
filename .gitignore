@@ -7,4 +7,5 @@
 .DS_Store
 .gitignore
 .RData
+.RDataTmp
 addCommitPush.sh
