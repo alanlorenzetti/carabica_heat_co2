@@ -8,4 +8,6 @@
 .gitignore
 .RData
 .RDataTmp
+.carabica_heat_co2.Rproj
+.gitignore
 addCommitPush.sh
