@@ -65,32 +65,40 @@ PRJNA630692 = paste0(list.dirs(path = "salmon_quant/PRJNA630692", recursive = F)
                      "quant.sf")
 PRJNA630692 = PRJNA630692[grepl(pattern = "/CA_", x = PRJNA630692)]
 
-files = c(PRJNA609253,
-          PRJNA630692)
-
 # importing quant data
 # ~12k transcripts missing in tx2gene object
-quant = tximport(files = files,
-                 type = "salmon",
-                 tx2gene = tx2gene)
+quant = list()
+
+quant$PRJNA609253 = tximport(files = PRJNA609253,
+                             type = "salmon",
+                             tx2gene = tx2gene)
+
+quant$PRJNA630692 = tximport(files = PRJNA630692,
+                             type = "salmon",
+                             tx2gene = tx2gene)
 
 # defining colData
 sample = c(str_replace(PRJNA609253, ".*-(.*?)/quant.*", "PRJNA609253_\\1"),
            str_replace(PRJNA630692, ".*_(.*)/quant.*", "PRJNA630692_\\1"))
 temperature = c(str_replace(PRJNA609253, ".*-(.*?)_.*", "\\1"),
                 str_replace(PRJNA630692, ".*ppm_(.*?)_.*", "\\1"))
-co2 = c(rep("380ppm", length(PRJNA609253)),
+co2 = c(rep("Unknown", length(PRJNA609253)),
         str_replace(PRJNA630692, ".*_(.*ppm?)_..C.*", "\\1"))
 cultivar = c(str_replace(PRJNA609253, ".*-..T_(.*?)_.*", "\\1"),
              str_replace(PRJNA630692, ".*/(.*?)_...ppm.*", "\\1TU"))
 replicate = c(str_replace(PRJNA609253, ".*_([0-9])/quant.*", "\\1"),
               str_replace(PRJNA630692, ".*_(.*)/quant.*", "\\1"))
+response = c(rep("short", length(PRJNA609253)),
+             rep("long", length(PRJNA630692)))
 
-colData = tibble(sample = sample,
-                 temperature = temperature,
-                 co2 = co2,
-                 cultivar = cultivar,
-                 replicate = replicate) %>% 
+colData = list()
+
+colData$full = tibble(sample = sample,
+                      temperature = temperature,
+                      co2 = co2,
+                      cultivar = cultivar,
+                      replicate = replicate,
+                      response = response) %>% 
   mutate(temperature = case_when(temperature == "OpT" ~ "23C",
                                  temperature == "WaT" ~ "30C",
                                  TRUE ~ temperature),
@@ -104,8 +112,15 @@ colData = tibble(sample = sample,
                                replicate == "4" ~ "D",
                                replicate == "5" ~ "E",
                                TRUE ~ replicate),
-         replicate = str_replace(replicate, "[0-9]{1,2}", ""),
-         group = paste0(cultivar, "_", temperature, "_", co2))
+         replicate = str_replace(replicate, "[0-9]{1,2}", ""))
+
+colData$PRJNA609253 = colData$full %>% 
+  filter(response == "short") %>% 
+  mutate(group = paste0(cultivar, "_", temperature))
+
+colData$PRJNA630692 = colData$full %>% 
+  filter(response == "long") %>% 
+  mutate(group = paste0(co2, "_", temperature))
 
 # dds object from tximport
 # according to
@@ -114,27 +129,27 @@ colData = tibble(sample = sample,
 # of implementing the method called
 # "original counts and offset"
 # proposed by tximport paper
-dds = DESeqDataSetFromTximport(txi = quant,
-                               colData = colData,
-                               design = ~ co2 + temperature)
+dds = list()
+
+dds$PRJNA609253 = DESeqDataSetFromTximport(txi = quant$PRJNA609253,
+                                           colData = colData$PRJNA609253,
+                                           design = ~ group)
+
+dds$PRJNA630692 = DESeqDataSetFromTximport(txi = quant$PRJNA630692,
+                                           colData = colData$PRJNA630692,
+                                           design = ~ group)
 
 # filtering low count entries
-keep = rowSums(counts(dds)) >= 10
-dds = dds[keep,]
+keep = list()
+keep$PRJNA609253 = rowSums(counts(dds$PRJNA609253)) >= 10
+dds$PRJNA609253 = dds$PRJNA609253[keep$PRJNA609253,]
+
+keep$PRJNA630692 = rowSums(counts(dds$PRJNA630692)) >= 10
+dds$PRJNA630692 = dds$PRJNA630692[keep$PRJNA630692,]
 
 # running DESeq2
-dds = DESeq(dds)
-
-# exploring data with PCA
-vsd = vst(dds, blind=FALSE)
-pcaData = plotPCA(vsd, intgroup=c("temperature", "cultivar", "co2"), returnData=T)
-percentVar = round(100 * attr(pcaData, "percentVar"))
-ggplot(pcaData, aes(PC1, PC2, color=temperature, shape=cultivar, size=co2)) +
-  geom_point() +
-  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
-  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
-  coord_fixed() +
-  theme_bw()
+dds$PRJNA609253 = DESeq(dds$PRJNA609253)
+dds$PRJNA630692 = DESeq(dds$PRJNA630692)
 
 # setting function to plot volcano
 volcanoPlot=function(parsedRes = parsedRes, title = title){
@@ -149,7 +164,8 @@ volcanoPlot=function(parsedRes = parsedRes, title = title){
                stroke = 0) +
     geom_label_repel(show.legend = F,
                      color = "black",
-                     alpha = 0.75) +
+                     alpha = 0.75,
+                     max.overlaps = 30) +
     xlab("Log<sub>2</sub> (Fold Change)") +
     ylab("-Log<sub>10</sub> (Adjusted <i>p</i>-value)") +
     theme(axis.title.x = element_markdown(),
@@ -218,41 +234,46 @@ genRes=function(obj = obj, var = var, numerator = numerator, denominator = denom
   return(resultsList)
 }
 
-# getting results for temperature
+# getting results for PRJNA609253
 res = list()
 
-comps = list(c("25C", "23C"),
-             c("30C", "25C"),
-             c("37C", "30C"),
-             c("42C", "37C"),
-             c("30C", "23C"),
-             c("37C", "25C"),
-             c("42C", "30C"))
+comps = list(c("Acaua_30C", "Acaua_23C"),
+             c("Catuai_30C", "Catuai_23C"),
+             c("Catuai_30C", "Acaua_30C"),
+             c("Catuai_23C", "Acaua_23C"))
 
 for(i in 1:length(comps)){
   contrastName = paste0(comps[[i]][1], "_vs_", comps[[i]][2])
-  res[["temperature"]][[contrastName]] = genRes(obj = dds,
-                                               var = "temperature",
-                                               numerator = comps[[i]][1],
-                                               denominator = comps[[i]][2])
+  res[["PRJNA609253"]][[contrastName]] = genRes(obj = dds$PRJNA609253,
+                                          var = "group",
+                                          numerator = comps[[i]][1],
+                                          denominator = comps[[i]][2])
 }
 
-# getting results for co2
-comps = list(c("700ppm", "380ppm"))
+# getting results for PRJNA630692
+comps = list(c("380ppm_37C", "380ppm_25C"),
+             c("380ppm_42C", "380ppm_25C"),
+             c("700ppm_37C", "700ppm_25C"),
+             c("700ppm_42C", "700ppm_25C"),
+             c("700ppm_25C", "380ppm_25C"),
+             c("700ppm_37C", "380ppm_37C"),
+             c("700ppm_42C", "380ppm_42C"),
+             c("700ppm_42C", "380ppm_25C"),
+             c("700ppm_37C", "380ppm_25C"))
 
 for(i in 1:length(comps)){
   contrastName = paste0(comps[[i]][1], "_vs_", comps[[i]][2])
-  res[["co2"]][[contrastName]] = genRes(obj = dds,
-                                        var = "co2",
-                                        numerator = comps[[i]][1],
-                                        denominator = comps[[i]][2])
+  res[["PRJNA630692"]][[contrastName]] = genRes(obj = dds$PRJNA630692,
+                                                var = "group",
+                                                numerator = comps[[i]][1],
+                                                denominator = comps[[i]][2])
 }
 
 # function to write deseq2 results
 writeResults = function(resultsObj = resultsObj, var = var, contrastName = contrastName){
   
   filenamexlsx = paste0("results/deseq2-", var, "-", contrastName, ".xlsx")
-  filenamevolcano = paste0("plots/deseq2-", var, "-", contrastName, ".png")
+  filenamevolcano = paste0("plots/volcano-", var, "-", contrastName, ".png")
   
   outputxlsx = list("original" = resultsObj[[var]][[contrastName]][["original"]],
                     "parsed" = resultsObj[[var]][[contrastName]][["parsed"]])
@@ -279,35 +300,89 @@ for(i in names(res)){
   }
 }
 
-# writing quant dataset to Rdata object
+# writing quant datasets to Rdata object
 save(quant,
-     file = "results/quant.RData")
+     file ="results/quant.RData")
 
-# writing sample info
-write_tsv(x = colData,
-          file = "results/sampleInfo.tsv")
+# writing additional files
+for(i in names(quant)){
+  # writing sample info
+  write_tsv(x = colData[[i]],
+            file = paste0("results/sampleInfo_", i, ".tsv"))
+  
+  # writing userfriendly abundance data
+  # generated by tximport function
+  countsdf = assay(dds[[i]]) %>% as_tibble(rownames = "gene")
+  colnames(countsdf) = c("gene", colData[[i]][["sample"]])
+  
+  write_tsv(x = countsdf,
+            file = paste0("results/counts_", i, ".tsv"))
+}
 
-# writing userfriendly abundance data
-# generated by tximport function
-countsdf = assay(dds) %>% as_tibble(rownames = "gene")
-colnames(countsdf) = c("gene", colData$sample)
-
-write_tsv(x = countsdf,
-          file = "results/counts.tsv")
-
-# creating venn diagram of consecutive
-# temperature changes
-# drawing venn diagrams
-vennplot = venn(combinations = list("25C_vs_23C" = res$temperature$`25C_vs_23C`$sigGenes,
-                                    "30C_vs_25C" = res$temperature$`30C_vs_25C`$sigGenes,
-                                    "37C_vs_30C" = res$temperature$`37C_vs_30C`$sigGenes,
-                                    "42C_vs_37C" = res$temperature$`42C_vs_37C`$sigGenes)) %>%
+# venn diagrams ####
+# creating venn diagram for PRJNA609253
+vennplot = venn(combinations = list("Acauã 30C vs. Acauã 23C" = res$PRJNA609253$Acaua_30C_vs_Acaua_23C$sigGenes,
+                                    "Catuaí 30C vs. Catuaí 23C" = res$PRJNA609253$Catuai_30C_vs_Catuai_23C$sigGenes)) %>%
   plot()
 
 ggsave(plot = vennplot,
-       filename = "plots/vennplot_temperature.png",
+       filename = "plots/vennplot_PRJNA609253_temperature_cultivar.png",
        device = "png",
        width = 7,
        height = 7,
        dpi = 300,
        units = "in")
+
+# creating venn diagram for PRJNA630692
+# temperature
+vennplot = venn(combinations = list("380ppm 37C vs. 380ppm 25C" = res$PRJNA630692$`380ppm_37C_vs_380ppm_25C`$sigGenes,
+                                    "380ppm 42C vs. 380ppm 25C" = res$PRJNA630692$`380ppm_42C_vs_380ppm_25C`$sigGenes,
+                                    "700ppm 37C vs. 700ppm 25C" = res$PRJNA630692$`700ppm_37C_vs_700ppm_25C`$sigGenes,
+                                    "700ppm 42C vs. 700ppm 25C" = res$PRJNA630692$`700ppm_42C_vs_700ppm_25C`$sigGenes)) %>%
+  plot()
+
+ggsave(plot = vennplot,
+       filename = "plots/vennplot_PRJNA630692_temperature.png",
+       device = "png",
+       width = 10,
+       height = 8,
+       dpi = 300,
+       units = "in")
+
+# co2
+vennplot = venn(combinations = list("700ppm 25C vs. 380ppm 25C" = res$PRJNA630692$`700ppm_25C_vs_380ppm_25C`$sigGenes,
+                                    "700ppm 37C vs. 380ppm 37C" = res$PRJNA630692$`700ppm_37C_vs_380ppm_37C`$sigGenes,
+                                    "700ppm 42C vs. 380ppm 42C" = res$PRJNA630692$`700ppm_42C_vs_380ppm_42C`$sigGenes)) %>%
+  plot()
+
+ggsave(plot = vennplot,
+       filename = "plots/vennplot_PRJNA630692_co2.png",
+       device = "png",
+       width = 8,
+       height = 8,
+       dpi = 300,
+       units = "in")
+
+# co2 and temperature
+vennplot = venn(combinations = list("700ppm 37C vs. 380ppm 25C" = res$PRJNA630692$`700ppm_37C_vs_380ppm_25C`$sigGenes,
+                                    "700ppm 42C vs. 380ppm 25C" = res$PRJNA630692$`700ppm_42C_vs_380ppm_25C`$sigGenes)) %>%
+  plot()
+
+ggsave(plot = vennplot,
+       filename = "plots/vennplot_PRJNA630692_temperature_co2.png",
+       device = "png",
+       width = 8,
+       height = 8,
+       dpi = 300,
+       units = "in")
+
+# exploring data with PCA
+# vsd = vst(dds$PRJNA630692, blind=FALSE)
+# pcaData = plotPCA(vsd, intgroup=c("temperature", "cultivar", "co2"), returnData=T)
+# percentVar = round(100 * attr(pcaData, "percentVar"))
+# ggplot(pcaData, aes(PC1, PC2, color=temperature, shape=cultivar, size=co2)) +
+#   geom_point() +
+#   xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+#   ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+#   coord_fixed() +
+#   theme_bw()
