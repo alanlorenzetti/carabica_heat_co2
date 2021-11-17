@@ -11,29 +11,6 @@
 # setting wd
 #setwd("~/gdrive/carabica_heat_co2/")
 
-# loading libs ####
-library(pacman)
-
-packs = c("tidyverse",
-          "DESeq2",
-          "tximport",
-          "rtracklayer",
-          "ggtext",
-          "ggthemes",
-          "ggrepel",
-          "openxlsx",
-          "eulerr")
-
-p_load(char = packs)
-
-# setting ggplot theme
-theme_set(theme_bw())
-
-# getting colors from tab10 color scheme
-tab10 = list()
-tab10$blue = ggthemes::ggthemes_data$tableau$`color-palettes`$regular$`Tableau 10`$value[1]
-tab10$red = ggthemes::ggthemes_data$tableau$`color-palettes`$regular$`Tableau 10`$value[3]
-
 # creating results and plots
 # directories
 for(i in c("results", "plots")){
@@ -44,19 +21,7 @@ for(i in c("results", "plots")){
 qthr = 0.01
 lfcthr = 1
 
-# getting started ####
-# creating a tx2gene object
-annot = rtracklayer::import(con = "data/Carabica.gff") %>% 
-  as.data.frame() %>% 
-  as_tibble()
 
-# considering most of entries (except rRNA and partial mRNA)
-# in RefSeq transcriptome file
-tx2gene = annot %>%
-  filter(gbkey == "mRNA" | gbkey == "ncRNA" | gbkey == "misc_RNA") %>%
-  select(TXNAME = Name, GENEID = gene) %>%
-  drop_na() %>%
-  unique()
 
 # finding files
 PRJNA609253 = paste0(list.dirs(path = "salmon_quant/PRJNA609253", recursive = F), "/",
@@ -123,7 +88,6 @@ colData$PRJNA630692 = colData$full %>%
   mutate(group = paste0(co2, "_", temperature))
 
 # dds object from tximport
-# according to
 #
 # the function below takes care
 # of implementing the method called
@@ -179,7 +143,10 @@ volcanoPlot=function(parsedRes = parsedRes, title = title){
 }
 
 # setting function to generate results
-genRes=function(obj = obj, var = var, numerator = numerator, denominator = denominator){
+genRes=function(obj = obj, var = var,
+                numerator = numerator, denominator = denominator,
+                functionalAnnot = functionalAnnot){
+  
   title = paste(numerator, "vs.", denominator)
   
   results = results(object = obj,
@@ -213,7 +180,10 @@ genRes=function(obj = obj, var = var, numerator = numerator, denominator = denom
   
   resultsParsed = resultsParsed %>% 
     mutate(label = case_when(gene %in% c(topup, topdown) ~ gene,
-                             TRUE ~ NA_character_))
+                             TRUE ~ NA_character_)) %>% 
+    left_join(x = .,
+              y = functionalAnnot,
+              by = c("gene" = "gene_id"))
   
   sigGenes = resultsParsed %>% 
     filter(status == "Upregulated" | status == "Downregulated") %>% 
@@ -221,15 +191,23 @@ genRes=function(obj = obj, var = var, numerator = numerator, denominator = denom
   
   p = volcanoPlot(parsedRes = resultsParsed, title = title)
   
+  enrichmentAnalysis = runTopGO(parsedDE = resultsParsed,
+                                thr = qthr,
+                                title = title)
+  
   resultsList = list(results,
                      resultsParsed,
                      p,
-                     sigGenes)
+                     sigGenes,
+                     enrichmentAnalysis$BP,
+                     enrichmentAnalysis$MF)
   
   names(resultsList) = c("original",
                          "parsed",
                          "volcano",
-                         "sigGenes")
+                         "sigGenes",
+                         "enrichment_BP",
+                         "enrichment_MF")
     
   return(resultsList)
 }
@@ -245,9 +223,10 @@ comps = list(c("Acaua_30C", "Acaua_23C"),
 for(i in 1:length(comps)){
   contrastName = paste0(comps[[i]][1], "_vs_", comps[[i]][2])
   res[["PRJNA609253"]][[contrastName]] = genRes(obj = dds$PRJNA609253,
-                                          var = "group",
-                                          numerator = comps[[i]][1],
-                                          denominator = comps[[i]][2])
+                                                var = "group",
+                                                numerator = comps[[i]][1],
+                                                denominator = comps[[i]][2],
+                                                functionalAnnot = ob)
 }
 
 # getting results for PRJNA630692
@@ -266,7 +245,8 @@ for(i in 1:length(comps)){
   res[["PRJNA630692"]][[contrastName]] = genRes(obj = dds$PRJNA630692,
                                                 var = "group",
                                                 numerator = comps[[i]][1],
-                                                denominator = comps[[i]][2])
+                                                denominator = comps[[i]][2],
+                                                functionalAnnot = ob)
 }
 
 # function to write deseq2 results
@@ -276,7 +256,9 @@ writeResults = function(resultsObj = resultsObj, var = var, contrastName = contr
   filenamevolcano = paste0("plots/volcano-", var, "-", contrastName, ".png")
   
   outputxlsx = list("original" = resultsObj[[var]][[contrastName]][["original"]],
-                    "parsed" = resultsObj[[var]][[contrastName]][["parsed"]])
+                    "parsed" = resultsObj[[var]][[contrastName]][["parsed"]],
+                    "go_enrichment_BP" = resultsObj[[var]][[contrastName]][["enrichment_BP"]],
+                    "go_enrichment_MF" = resultsObj[[var]][[contrastName]][["enrichment_MF"]])
   
   write.xlsx(outputxlsx,
              file = filenamexlsx,
@@ -326,7 +308,7 @@ vennplot = venn(combinations = list("Acauã 30C vs. Acauã 23C" = res$PRJNA60925
   plot()
 
 ggsave(plot = vennplot,
-       filename = "plots/vennplot_PRJNA609253_temperature_cultivar.png",
+       filename = "plots/vennplot-PRJNA609253_temperature_cultivar.png",
        device = "png",
        width = 7,
        height = 7,
@@ -342,7 +324,7 @@ vennplot = venn(combinations = list("380ppm 37C vs. 380ppm 25C" = res$PRJNA63069
   plot()
 
 ggsave(plot = vennplot,
-       filename = "plots/vennplot_PRJNA630692_temperature.png",
+       filename = "plots/vennplot-PRJNA630692_temperature.png",
        device = "png",
        width = 10,
        height = 8,
@@ -356,7 +338,7 @@ vennplot = venn(combinations = list("700ppm 25C vs. 380ppm 25C" = res$PRJNA63069
   plot()
 
 ggsave(plot = vennplot,
-       filename = "plots/vennplot_PRJNA630692_co2.png",
+       filename = "plots/vennplot-PRJNA630692_co2.png",
        device = "png",
        width = 8,
        height = 8,
@@ -369,7 +351,7 @@ vennplot = venn(combinations = list("700ppm 37C vs. 380ppm 25C" = res$PRJNA63069
   plot()
 
 ggsave(plot = vennplot,
-       filename = "plots/vennplot_PRJNA630692_temperature_co2.png",
+       filename = "plots/vennplot-PRJNA630692_temperature_co2.png",
        device = "png",
        width = 8,
        height = 8,
@@ -386,3 +368,4 @@ ggsave(plot = vennplot,
 #   ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
 #   coord_fixed() +
 #   theme_bw()
+
